@@ -1,5 +1,7 @@
 # Digit Classifier
 
+**Live demo: https://digit-classifier-one.vercel.app**
+
 A small feedforward neural network (784 → 128 → 64 → 10, ReLU) trained on MNIST with PyTorch, plus a drag-and-drop web page where you drop in images of digits and the network guesses them. Test accuracy is about 97.6%.
 
 The web page runs the network **entirely in your browser** using the exported weights, so it can be hosted as a static site (on Vercel, for example).
@@ -27,4 +29,4 @@ python3 -m venv .venv
 
 ## Deploy
 
-`vercel.json` serves the `web/` folder as a static site with no build step. Only `web/` is uploaded (see `.vercelignore`).
+The repo is connected to Vercel: every push to `main` redeploys the site automatically. `vercel.json` serves the `web/` folder as a static site with no build step, and only `web/` is uploaded (see `.vercelignore`).
