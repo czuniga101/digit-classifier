@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Digit Classifier</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1d1f; --muted: #6e6e73;
+    --line: #e2e0db; --accent: #2f6fde; --accent-soft: #e4edfc; --bar: #d9d6cf;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161618; --panel: #1f1f22; --ink: #f2f2f2; --muted: #9a9aa0;
+      --line: #2e2e33; --accent: #6b9bff; --accent-soft: #23304a; --bar: #3a3a40;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding: 40px 20px 60px;
+  }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+
+  #drop {
+    border: 2px dashed var(--line); border-radius: 14px; background: var(--panel);
+    padding: 44px 20px; text-align: center; cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  #drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  #drop strong { display: block; font-size: 17px; margin-bottom: 4px; }
+  #drop span { color: var(--muted); font-size: 14px; }
+
+  .toolbar { display: flex; justify-content: space-between; align-items: center; margin: 28px 0 12px; }
+  .toolbar h2 { font-size: 15px; margin: 0; color: var(--muted); font-weight: 600; }
+  button.clear {
+    background: none; border: 1px solid var(--line); color: var(--muted);
+    border-radius: 8px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer;
+  }
+
+  #results { display: grid; gap: 14px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 16px; display: grid; grid-template-columns: auto auto 1fr; gap: 18px; align-items: center;
+  }
+  .imgs { display: flex; gap: 10px; }
+  .imgs figure { margin: 0; text-align: center; }
+  .imgs img {
+    width: 96px; height: 96px; object-fit: contain; border-radius: 8px;
+    background: #fff; border: 1px solid var(--line); display: block;
+  }
+  .imgs img.seen { background: #000; image-rendering: pixelated; }
+  .imgs figcaption { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  .guess { text-align: center; min-width: 90px; }
+  .guess .num { font-size: 56px; font-weight: 700; line-height: 1; }
+  .guess .conf { font-size: 13px; color: var(--muted); margin-top: 6px; }
+
+  .bars { display: grid; gap: 3px; }
+  .bar { display: grid; grid-template-columns: 14px 1fr 44px; gap: 8px; align-items: center; font-size: 12px; }
+  .bar .track { height: 8px; border-radius: 4px; background: var(--bar); overflow: hidden; }
+  .bar .fill { height: 100%; background: var(--muted); border-radius: 4px; }
+  .bar.top .fill { background: var(--accent); }
+  .bar.top { font-weight: 600; }
+  .bar .pct { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .err { color: #d33; grid-column: 1 / -1; }
+  .fname { font-size: 12px; color: var(--muted); grid-column: 1 / -1; margin-bottom: -10px;
+           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  @media (max-width: 620px) {
+    .card { grid-template-columns: 1fr; justify-items: center; }
+    .bars { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Digit Classifier</h1>
+  <p class="sub">Drop images of handwritten digits (0–9) and the neural network will guess each one.</p>
+
+  <div id="drop" tabindex="0">
+    <strong>Drag &amp; drop images here</strong>
+    <span>or click to choose files · you can also paste an image (⌘V)</span>
+    <input id="file" type="file" accept="image/*" multiple hidden>
+  </div>
+
+  <div class="toolbar" id="toolbar" hidden>
+    <h2>Results</h2>
+    <button class="clear" id="clear">Clear</button>
+  </div>
+  <div id="results"></div>
+</main>
+
+<script>
+  const drop = document.getElementById("drop");
+  const fileInput = document.getElementById("file");
+  const results = document.getElementById("results");
+  const toolbar = document.getElementById("toolbar");
+
+  // Open the file picker on click
+  drop.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => { handleFiles(fileInput.files); fileInput.value = ""; });
+
+  // Drag-and-drop anywhere on the page
+  ["dragenter", "dragover"].forEach(ev => document.addEventListener(ev, e => {
+    e.preventDefault(); drop.classList.add("over");
+  }));
+  ["dragleave", "drop"].forEach(ev => document.addEventListener(ev, e => {
+    e.preventDefault(); if (ev === "drop" || e.target === document.documentElement) drop.classList.remove("over");
+  }));
+  document.addEventListener("drop", e => handleFiles(e.dataTransfer.files));
+
+  // Paste from clipboard
+  document.addEventListener("paste", e => {
+    const files = [...e.clipboardData.items].filter(i => i.type.startsWith("image/")).map(i => i.getAsFile());
+    handleFiles(files);
+  });
+
+  document.getElementById("clear").addEventListener("click", () => {
+    results.innerHTML = ""; toolbar.hidden = true;
+  });
+
+  function handleFiles(files) {
+    [...files].filter(f => f.type.startsWith("image/")).forEach(classify);
+  }
+
+  // ---------- The neural network, running entirely in the browser ----------
+
+  // Trained weights exported from model.pt by export_weights.py
+  const weightsReady = fetch("weights.json").then(r => {
+    if (!r.ok) throw new Error("Couldn't load weights.json");
+    return r.json();
+  });
+
+  // Forward pass: Linear -> ReLU -> Linear -> ReLU -> Linear -> softmax
+  function forward(net, input) {
+    let x = input;
+    net.layers.forEach((L, i) => {
+      const y = new Float32Array(L.out);
+      for (let o = 0; o < L.out; o++) {
+        let s = L.bias[o];
+        const row = o * L.in;
+        for (let k = 0; k < L.in; k++) s += L.weight[row + k] * x[k];
+        y[o] = i < net.layers.length - 1 ? Math.max(0, s) : s;  // ReLU on hidden layers
+      }
+      x = y;
+    });
+    const m = Math.max(...x), e = x.map(v => Math.exp(v - m)), sum = e.reduce((a, b) => a + b);
+    return Array.from(e, v => v / sum);
+  }
+
+  function loadImage(src) {
+    return new Promise((ok, fail) => {
+      const img = new Image();
+      img.onload = () => ok(img);
+      img.onerror = () => fail(new Error("That file couldn't be read as an image"));
+      img.src = src;
+    });
+  }
+
+  // Turn any digit image into a 28x28 MNIST-style array (white digit on black, 0-1)
+  async function toMnist(src) {
+    const img = await loadImage(src);
+    const W = img.naturalWidth, H = img.naturalHeight;
+    const c = Object.assign(document.createElement("canvas"), { width: W, height: H });
+    const g = c.getContext("2d");
+    g.fillStyle = "#fff"; g.fillRect(0, 0, W, H);   // flatten transparency onto white
+    g.drawImage(img, 0, 0);
+    const px = g.getImageData(0, 0, W, H).data;
+
+    // Grayscale 0-1
+    let a = new Float32Array(W * H);
+    for (let i = 0; i < a.length; i++)
+      a[i] = (0.299 * px[i * 4] + 0.587 * px[i * 4 + 1] + 0.114 * px[i * 4 + 2]) / 255;
+
+    // Invert if the background is light (MNIST digits are white on black)
+    const sorted = Float32Array.from(a).sort();
+    if (sorted[sorted.length >> 1] > 0.5) a = a.map(v => 1 - v);
+
+    // Stretch contrast, drop faint noise, and find the digit's bounding box
+    let lo = Infinity, hi = -Infinity;
+    for (const v of a) { if (v < lo) lo = v; if (v > hi) hi = v; }
+    const span = Math.max(hi - lo, 1e-6);
+    let x0 = W, y0 = H, x1 = -1, y1 = -1;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      let v = (a[y * W + x] - lo) / span;
+      if (v < 0.2) v = 0;
+      a[y * W + x] = v;
+      if (v > 0) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    }
+    const out = new Float32Array(28 * 28);
+    if (x1 < 0) return out;  // blank image
+
+    // Crop, then scale so the longer side is 20px (as MNIST does), centred on 28x28
+    const cw = x1 - x0 + 1, ch = y1 - y0 + 1;
+    const crop = Object.assign(document.createElement("canvas"), { width: cw, height: ch });
+    const cg = crop.getContext("2d"), cd = cg.createImageData(cw, ch);
+    for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+      const v = Math.round(a[(y + y0) * W + (x + x0)] * 255), j = (y * cw + x) * 4;
+      cd.data[j] = cd.data[j + 1] = cd.data[j + 2] = v; cd.data[j + 3] = 255;
+    }
+    cg.putImageData(cd, 0, 0);
+    const s = 20 / Math.max(cw, ch);
+    const nw = Math.max(1, Math.round(cw * s)), nh = Math.max(1, Math.round(ch * s));
+
+    // Shrink in halving steps: a single big jump with canvas smoothing loses thin strokes
+    let step = crop;
+    while (step.width / 2 > nw && step.height / 2 > nh) {
+      const half = Object.assign(document.createElement("canvas"),
+        { width: Math.ceil(step.width / 2), height: Math.ceil(step.height / 2) });
+      const hg = half.getContext("2d");
+      hg.imageSmoothingQuality = "high";
+      hg.drawImage(step, 0, 0, half.width, half.height);
+      step = half;
+    }
+    const small = Object.assign(document.createElement("canvas"), { width: 28, height: 28 });
+    const sg = small.getContext("2d");
+    sg.fillStyle = "#000"; sg.fillRect(0, 0, 28, 28);
+    sg.imageSmoothingQuality = "high";
+    sg.drawImage(step, (28 - nw) >> 1, (28 - nh) >> 1, nw, nh);
+    const sp = sg.getImageData(0, 0, 28, 28).data;
+    for (let i = 0; i < 784; i++) out[i] = sp[i * 4] / 255;
+
+    // Shift so the centre of mass sits in the middle
+    let tot = 0, cy = 0, cx = 0;
+    for (let i = 0; i < 784; i++) { tot += out[i]; cy += out[i] * Math.floor(i / 28); cx += out[i] * (i % 28); }
+    const dy = Math.round(14 - cy / tot), dx = Math.round(14 - cx / tot);
+    const shifted = new Float32Array(784);
+    for (let y = 0; y < 28; y++) for (let x = 0; x < 28; x++)
+      shifted[(((y + dy) % 28 + 28) % 28) * 28 + (((x + dx) % 28 + 28) % 28)] = out[y * 28 + x];
+    return shifted;
+  }
+
+  // Draw the 28x28 input enlarged, so you can see what the network saw
+  function previewUrl(arr) {
+    const c = Object.assign(document.createElement("canvas"), { width: 28, height: 28 });
+    const g = c.getContext("2d"), d = g.createImageData(28, 28);
+    arr.forEach((v, i) => { d.data[i*4] = d.data[i*4+1] = d.data[i*4+2] = Math.round(v * 255); d.data[i*4+3] = 255; });
+    g.putImageData(d, 0, 0);
+    return c.toDataURL();
+  }
+
+  async function predict(src) {
+    const [net, arr] = await Promise.all([weightsReady, toMnist(src)]);
+    const input = arr.map(v => (v - net.mean) / net.std);   // same normalisation as training
+    const probs = forward(net, input);
+    return { digit: probs.indexOf(Math.max(...probs)), probs, preview: previewUrl(arr) };
+  }
+
+  // ---------- Run one image through the network and render its card (newest first) ----------
+  async function classify(file) {
+    toolbar.hidden = false;
+    const card = document.createElement("div");
+    card.className = "card";
+    const url = URL.createObjectURL(file);
+    card.innerHTML = `<div class="fname"></div>
+      <div class="imgs"><figure><img src="${url}" alt=""><figcaption>Your image</figcaption></figure></div>
+      <div class="guess"><div class="num">…</div></div><div class="bars"></div>`;
+    card.querySelector(".fname").textContent = file.name || "Pasted image";
+    results.prepend(card);
+
+    try {
+      const data = await predict(url);
+
+      card.querySelector(".imgs").insertAdjacentHTML("beforeend",
+        `<figure><img class="seen" src="${data.preview}" alt=""><figcaption>What it saw</figcaption></figure>`);
+      card.querySelector(".num").textContent = data.digit;
+      card.querySelector(".guess").insertAdjacentHTML("beforeend",
+        `<div class="conf">${(data.probs[data.digit] * 100).toFixed(1)}% sure</div>`);
+      card.querySelector(".bars").innerHTML = data.probs.map((p, d) => `
+        <div class="bar ${d === data.digit ? "top" : ""}">
+          <span>${d}</span><div class="track"><div class="fill" style="width:${(p * 100).toFixed(1)}%"></div></div>
+          <span class="pct">${(p * 100).toFixed(1)}%</span>
+        </div>`).join("");
+    } catch (err) {
+      card.querySelector(".num").textContent = "?";
+      card.insertAdjacentHTML("beforeend", `<div class="err">${err.message}</div>`);
+    }
+  }
+</script>
+</body>
+</html>
